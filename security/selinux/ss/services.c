@@ -771,6 +771,9 @@ out:
 	kfree(n);
 	kfree(t);
 
+#ifdef CONFIG_ALWAYS_ENFORCE
+	selinux_enforcing = 1;
+#endif
 	if (!selinux_enforcing)
 		return 0;
 	return -EPERM;
@@ -1414,11 +1417,8 @@ static int security_context_to_sid_core(const char *scontext, u32 scontext_len,
 
 	/* Copy the string so that we can modify the copy as we parse it. */
 	scontext2 = kmalloc(scontext_len + 1, gfp_flags);
-	if (!scontext2){
-	    printk(KERN_ERR "%s: kmalloc failed for \'%s\' with len: %u\n",
-	            __func__, scontext, scontext_len);
+	if (!scontext2)
 		return -ENOMEM;
-	}
 	memcpy(scontext2, scontext, scontext_len);
 	scontext2[scontext_len] = 0;
 
@@ -1426,11 +1426,8 @@ static int security_context_to_sid_core(const char *scontext, u32 scontext_len,
 		/* Save another copy for storing in uninterpreted form */
 		rc = -ENOMEM;
 		str = kstrdup(scontext2, gfp_flags);
-		if (!str){
-		    printk(KERN_ERR "%s: kstrdup failed for \'%s\' with len: %u\n",
-	                __func__, scontext2, scontext_len);
+		if (!str)
 			goto out;
-		}
 	}
 
 	read_lock(&policy_rwlock);
@@ -1528,6 +1525,10 @@ out:
 	kfree(s);
 	kfree(t);
 	kfree(n);
+
+#ifdef CONFIG_ALWAYS_ENFORCE
+	selinux_enforcing = 1;
+#endif
 	if (!selinux_enforcing)
 		return 0;
 	return -EACCES;
@@ -1819,6 +1820,9 @@ static inline int convert_context_handle_invalid_context(struct context *context
 	char *s;
 	u32 len;
 
+#ifdef CONFIG_ALWAYS_ENFORCE
+	selinux_enforcing = 1;
+#endif
 	if (selinux_enforcing)
 		return -EINVAL;
 
@@ -2021,7 +2025,6 @@ int security_load_policy(void *data, size_t len)
 	}
 	newpolicydb = oldpolicydb + 1;
 
-    printk(KERN_ERR "SELinux: security_load_policy, ss_initialized: %d\n",ss_initialized);
 	if (!ss_initialized) {
 		avtab_cache_init();
 		rc = policydb_read(&policydb, fp);
@@ -2095,10 +2098,8 @@ int security_load_policy(void *data, size_t len)
 	sidtab_shutdown(&sidtab);
 
 	rc = sidtab_map(&sidtab, clone_sid, &newsidtab);
-	if (rc){
-	    printk(KERN_ERR "SELinux: sidtab_map failed: %d\n", rc);
+	if (rc)
 		goto err;
-	}
 
 	/*
 	 * Convert the internal representations of contexts
@@ -2150,8 +2151,6 @@ err:
 
 out:
 	kfree(oldpolicydb);
-	printk(KERN_ERR "SELinux: security_load_policy, sidtab.shutdown: %d\n",
-	    sidtab.shutdown);
 	return rc;
 }
 
@@ -2545,6 +2544,7 @@ int security_fs_use(struct super_block *sb)
 	struct ocontext *c;
 	struct superblock_security_struct *sbsec = sb->s_security;
 	const char *fstype = sb->s_type->name;
+	u32 tmpsid;
 
 	read_lock(&policy_rwlock);
 
@@ -2559,7 +2559,8 @@ int security_fs_use(struct super_block *sb)
 		sbsec->behavior = c->v.behavior;
 		if (!c->sid[0]) {
 			rc = sidtab_context_to_sid(&sidtab, &c->context[0],
-						   &c->sid[0]);
+						   &tmpsid);
+			c->sid[0] = tmpsid;
 			if (rc)
 				goto out;
 		}
@@ -3016,6 +3017,13 @@ struct selinux_audit_rule {
 void selinux_audit_rule_free(void *vrule)
 {
 	struct selinux_audit_rule *rule = vrule;
+#ifdef CONFIG_RKP_KDP
+	int rc;
+
+	if ((rc = security_integrity_current()))
+		return;
+#endif  /* CONFIG_RKP_KDP */
+
 
 	if (rule) {
 		context_destroy(&rule->au_ctxt);
@@ -3032,6 +3040,10 @@ int selinux_audit_rule_init(u32 field, u32 op, char *rulestr, void **vrule)
 	struct selinux_audit_rule **rule = (struct selinux_audit_rule **)vrule;
 	int rc = 0;
 
+#ifdef CONFIG_RKP_KDP
+	if ((rc = security_integrity_current()))
+		return rc;
+#endif
 	*rule = NULL;
 
 	if (!ss_initialized)
@@ -3123,6 +3135,12 @@ out:
 int selinux_audit_rule_known(struct audit_krule *rule)
 {
 	int i;
+#ifdef CONFIG_RKP_KDP
+	int rc;
+
+	if ((rc = security_integrity_current()))
+		return rc;
+#endif
 
 	for (i = 0; i < rule->field_count; i++) {
 		struct audit_field *f = &rule->fields[i];
@@ -3151,6 +3169,12 @@ int selinux_audit_rule_match(u32 sid, u32 field, u32 op, void *vrule,
 	struct mls_level *level;
 	struct selinux_audit_rule *rule = vrule;
 	int match = 0;
+#ifdef CONFIG_RKP_KDP
+	int rc;
+
+	if ((rc = security_integrity_current()))
+		return rc;
+#endif
 
 	if (unlikely(!rule)) {
 		WARN_ONCE(1, "selinux_audit_rule_match: missing rule\n");
